@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+        content="
+          default-src 'self';
+          img-src 'self' data: blob:;
+          style-src 'self' 'unsafe-inline';
+          script-src 'self' 'unsafe-inline';
+          connect-src 'none';
+        ">
+  <title>IMG Resizer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #008080;
+      font-family: 'Segoe UI', 'MS Sans Serif', 'Microsoft Sans Serif', Arial, sans-serif;
+      font-size: 14px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      padding: 20px 12px 40px;
+    }
+    .window {
+      background: #c0c0c0;
+      border: 2px solid;
+      border-color: #ffffff #808080 #808080 #ffffff;
+      box-shadow: 2px 2px 0 rgba(0,0,0,0.3);
+      width: 100%;
+      max-width: 780px;
+      margin-top: 10px;
+    }
+    .title-bar {
+      background: linear-gradient(90deg, #000080, #1084d0);
+      color: white;
+      padding: 4px 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+      font-size: 13px;
+    }
+    .title-bar-text { letter-spacing: 0.3px; }
+    .title-bar-buttons { display: flex; gap: 2px; }
+    .title-btn {
+      background: #c0c0c0;
+      border: 2px solid;
+      border-color: #ffffff #808080 #808080 #ffffff;
+      width: 20px; height: 20px;
+      font-size: 11px; line-height: 16px; text-align: center;
+      cursor: pointer; color: black; font-weight: bold;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .title-btn:active { border-color: #808080 #ffffff #ffffff #808080; }
+    .window-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+    .field-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .field-row label { min-width: 60px; font-size: 13px; font-weight: 600; }
+    input[type="file"], input[type="number"], select, input[type="text"] {
+      font-family: inherit; font-size: 13px;
+      border: 2px solid; border-color: #808080 #ffffff #ffffff #808080;
+      background: white; padding: 4px 8px; outline: none;
+    }
+    input[type="number"] { width: 80px; }
+    input[type="text"] { width: 60px; }
+    select { padding: 4px 6px; }
+    button {
+      font-family: inherit; font-size: 13px; background: #c0c0c0;
+      border: 2px solid; border-color: #ffffff #808080 #808080 #ffffff;
+      padding: 5px 18px; cursor: pointer; min-width: 80px; font-weight: 600;
+    }
+    button:active { border-color: #808080 #ffffff #ffffff #808080; }
+    button:focus-visible { outline: 1px dotted black; outline-offset: -4px; }
+    button:disabled { color: #808080; cursor: default; }
+    hr { border: 1px solid #808080; border-bottom-color: #ffffff; margin: 4px 0 10px; }
+    .radio-group { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .radio-group label { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+    .preview-area { display: flex; gap: 12px; flex-wrap: wrap; }
+    .preview-box {
+      border: 2px inset; background: white; padding: 10px; text-align: center;
+      flex: 1 1 200px; min-height: 140px; display: flex; align-items: center;
+      justify-content: center; overflow: auto;
+    }
+    .preview-box img { max-width: 100%; max-height: 240px; display: block; }
+    .status-bar { border: 2px inset; padding: 4px 8px; font-size: 12px; background: white; margin-top: 4px; }
+    .note { font-size: 11px; color: #222; margin-top: 2px; }
+    .hidden { display: none !important; }
+    @media (max-width: 600px) {
+      body { padding: 12px 8px 32px; }
+      .window-body { padding: 10px; gap: 10px; }
+      .field-row { flex-direction: column; align-items: flex-start; }
+      .field-row label { min-width: auto; }
+      input[type="number"], input[type="text"], select { width: 100%; }
+      button { width: 100%; padding: 8px; }
+      .preview-area { flex-direction: column; }
+      .preview-box { min-height: 120px; }
+      .radio-group { flex-direction: column; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <div class="title-bar">
+      <div class="title-bar-text">📷 IMG Resizer</div>
+      <div class="title-bar-buttons">
+        <div class="title-btn">—</div>
+        <div class="title-btn">□</div>
+        <div class="title-btn">✕</div>
+      </div>
+    </div>
+    <div class="window-body">
+      <div class="field-row">
+        <label>Open Image:</label>
+        <input type="file" id="fileInput" accept="image/*">
+        <span class="note">(stays on your device)</span>
+      </div>
+      <div class="status-bar" id="originalInfo">No image loaded.</div>
+      <div class="preview-area">
+        <div class="preview-box" id="originalPreview"><span>Original</span></div>
+        <div class="preview-box" id="resizedPreview"><span>Processed</span></div>
+      </div>
+      <div class="radio-group">
+        <label><input type="radio" name="resizeMode" value="dimensions" checked> Resize by Dimensions</label>
+        <label><input type="radio" name="resizeMode" value="filesize"> Resize by File Size (KB)</label>
+      </div>
+      <div id="dimensionControls">
+        <div class="radio-group" id="unitGroup">
+          <label><input type="radio" name="unit" value="px" checked> Pixels</label>
+          <label><input type="radio" name="unit" value="cm"> Centimeters</label>
+          <label class="hidden" id="dpiLabel">DPI: <input type="number" id="dpiInput" value="96" min="1" max="1200" step="1"></label>
+        </div>
+        <div class="field-row">
+          <label>Width:</label>
+          <input type="number" id="widthInput" min="1" value="800" step="any">
+          <label>Height:</label>
+          <input type="number" id="heightInput" min="1" value="600" step="any">
+          <label><input type="checkbox" id="aspectCheckbox" checked> Keep aspect ratio</label>
+          <button id="resizeBtn">Resize</button>
+        </div>
+        <div id="pixelEquivalent" class="note"></div>
+      </div>
+      <div id="filesizeControls" class="hidden">
+        <div class="field-row">
+          <label>Target KB:</label>
+          <input type="number" id="targetKB" min="1" value="100" step="1">
+          <button id="compressBtn">Compress</button>
+        </div>
+        <span class="note">(JPEG or WebP – PNG is lossless)</span>
+      </div>
+      <hr>
+      <div class="field-row">
+        <label>Format:</label>
+        <select id="formatSelect">
+          <option value="image/png">PNG</option>
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/webp">WebP</option>
+        </select>
+        <label id="qualityLabel" class="hidden">Quality:</label>
+        <input type="range" id="qualitySlider" min="0.1" max="1.0" step="0.1" value="0.92" class="hidden">
+        <button id="downloadBtn" disabled>💾 Download</button>
+      </div>
+      <div class="status-bar" id="actionStatus">Ready.</div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      // DOM refs
+      const fileInput = document.getElementById('fileInput');
+      const originalInfo = document.getElementById('originalInfo');
+      const originalPreview = document.getElementById('originalPreview');
+      const resizedPreview = document.getElementById('resizedPreview');
+      const widthInput = document.getElementById('widthInput');
+      const heightInput = document.getElementById('heightInput');
+      const aspectCheckbox = document.getElementById('aspectCheckbox');
+      const resizeBtn = document.getElementById('resizeBtn');
+      const formatSelect = document.getElementById('formatSelect');
+      const qualityLabel = document.getElementById('qualityLabel');
+      const qualitySlider = document.getElementById('qualitySlider');
+      const downloadBtn = document.getElementById('downloadBtn');
+      const actionStatus = document.getElementById('actionStatus');
+      const pixelEquivalent = document.getElementById('pixelEquivalent');
+      const dpiLabel = document.getElementById('dpiLabel');
+      const dpiInput = document.getElementById('dpiInput');
+      const unitRadios = document.getElementsByName('unit');
+      const modeRadios = document.getElementsByName('resizeMode');
+      const dimensionControls = document.getElementById('dimensionControls');
+      const filesizeControls = document.getElementById('filesizeControls');
+      const targetKBInput = document.getElementById('targetKB');
+      const compressBtn = document.getElementById('compressBtn');
+
+      let originalImage = null;
+      let originalWidth = 0, originalHeight = 0;
+      let aspectRatio = 1;
+      let currentPxW = 800, currentPxH = 600;
+      let resizedBlob = null;
+
+      // ---- helpers ----
+      function updateQualityUI() {
+        const fmt = formatSelect.value;
+        const show = (fmt === 'image/jpeg' || fmt === 'image/webp');
+        qualityLabel.classList.toggle('hidden', !show);
+        qualitySlider.classList.toggle('hidden', !show);
+      }
+
+      function getDPI() { return parseInt(dpiInput.value) || 96; }
+      function cmToPx(cm) { return cm * getDPI() / 2.54; }
+      function pxToCm(px) { return px * 2.54 / getDPI(); }
+
+      function getCurrentUnit() {
+        return [...unitRadios].find(r => r.checked)?.value || 'px';
+      }
+
+      function setDisplayedDimensions(pxW, pxH) {
+        const unit = getCurrentUnit();
+        if (unit === 'px') {
+          widthInput.value = Math.round(pxW);
+          heightInput.value = Math.round(pxH);
+        } else {
+          widthInput.value = pxToCm(pxW).toFixed(2);
+          heightInput.value = pxToCm(pxH).toFixed(2);
+        }
+        updatePixelEquivalent();
+      }
+
+      function getEnteredDimensions() {
+        const unit = getCurrentUnit();
+        const rawW = parseFloat(widthInput.value);
+        const rawH = parseFloat(heightInput.value);
+        if (isNaN(rawW) || isNaN(rawH)) return null;
+        if (unit === 'px') return { w: Math.round(rawW), h: Math.round(rawH) };
+        return { w: Math.round(cmToPx(rawW)), h: Math.round(cmToPx(rawH)) };
+      }
+
+      function syncFromWidth() {
+        if (!aspectCheckbox.checked || !originalImage) return;
+        const dim = getEnteredDimensions();
+        if (!dim) return;
+        const newW = dim.w;
+        const newH = Math.round(newW / aspectRatio);
+        currentPxW = newW;
+        currentPxH = newH;
+        setDisplayedDimensions(currentPxW, currentPxH);
+      }
+
+      function syncFromHeight() {
+        if (!aspectCheckbox.checked || !originalImage) return;
+        const dim = getEnteredDimensions();
+        if (!dim) return;
+        const newH = dim.h;
+        const newW = Math.round(newH * aspectRatio);
+        currentPxW = newW;
+        currentPxH = newH;
+        setDisplayedDimensions(currentPxW, currentPxH);
+      }
+
+      function updatePixelEquivalent() {
+        if (!originalImage || getCurrentUnit() !== 'cm') {
+          pixelEquivalent.textContent = '';
+          return;
+        }
+        pixelEquivalent.textContent = `≈ ${currentPxW} × ${currentPxH} pixels at ${getDPI()} DPI`;
+      }
+
+      function updateModeUI() {
+        const mode = [...modeRadios].find(r => r.checked)?.value;
+        dimensionControls.classList.toggle('hidden', mode !== 'dimensions');
+        filesizeControls.classList.toggle('hidden', mode !== 'filesize');
+      }
+
+      // ---- Load image ----
+      fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          const img = new Image();
+          img.onload = function() {
+            originalImage = img;
+            originalWidth = img.naturalWidth;
+            originalHeight = img.naturalHeight;
+            aspectRatio = originalWidth / originalHeight;
+            currentPxW = originalWidth;
+            currentPxH = originalHeight;
+            setDisplayedDimensions(currentPxW, currentPxH);
+            originalInfo.textContent = `Original: ${originalWidth} × ${originalHeight} | ${(file.size/1024).toFixed(1)} KB`;
+            originalPreview.innerHTML = '';
+            const clone = img.cloneNode();
+            clone.style.maxWidth = '100%'; clone.style.maxHeight = '240px';
+            originalPreview.appendChild(clone);
+            resizedPreview.innerHTML = '<span>Processed</span>';
+            resizedBlob = null;
+            downloadBtn.disabled = true;
+            actionStatus.textContent = 'Image loaded. Choose mode and options.';
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+
+      // ---- Aspect ratio sync ----
+      widthInput.addEventListener('input', syncFromWidth);
+      heightInput.addEventListener('input', syncFromHeight);
+      aspectCheckbox.addEventListener('change', () => {
+        if (aspectCheckbox.checked && originalImage) syncFromWidth();
+      });
+
+      // ---- Unit / DPI changes ----
+      unitRadios.forEach(r => r.addEventListener('change', () => setDisplayedDimensions(currentPxW, currentPxH)));
+      dpiInput.addEventListener('input', () => {
+        if (getCurrentUnit() === 'cm') setDisplayedDimensions(currentPxW, currentPxH);
+      });
+
+      // ---- Mode switch ----
+      modeRadios.forEach(r => r.addEventListener('change', updateModeUI));
+
+      // ---- Resize by dimensions ----
+      resizeBtn.addEventListener('click', () => {
+        if (!originalImage) { actionStatus.textContent = 'Please open an image first.'; return; }
+        const dim = getEnteredDimensions();
+        if (!dim || dim.w < 1 || dim.h < 1) { actionStatus.textContent = 'Invalid dimensions.'; return; }
+        const targetW = dim.w, targetH = dim.h;
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW; canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(originalImage, 0, 0, targetW, targetH);
+        const previewUrl = canvas.toDataURL('image/png');
+        resizedPreview.innerHTML = '';
+        const img = new Image();
+        img.src = previewUrl;
+        img.style.maxWidth = '100%'; img.style.maxHeight = '240px';
+        resizedPreview.appendChild(img);
+        const fmt = formatSelect.value;
+        const q = (fmt === 'image/jpeg' || fmt === 'image/webp') ? parseFloat(qualitySlider.value) : undefined;
+        canvas.toBlob(blob => {
+          resizedBlob = blob;
+          downloadBtn.disabled = false;
+          actionStatus.textContent = `Resized to ${targetW}×${targetH} px (${(blob.size/1024).toFixed(1)} KB).`;
+        }, fmt, q);
+      });
+
+      // ---- Compress to file size (improved with auto‑downscale) ----
+      compressBtn.addEventListener('click', async () => {
+        if (!originalImage) { actionStatus.textContent = 'No image.'; return; }
+        const targetBytes = parseFloat(targetKBInput.value) * 1024;
+        if (isNaN(targetBytes) || targetBytes <= 0) { actionStatus.textContent = 'Invalid target size.'; return; }
+        const fmt = formatSelect.value;
+        if (fmt === 'image/png') {
+          actionStatus.textContent = 'PNG is lossless – cannot target file size. Use JPEG or WebP.';
+          return;
+        }
+        compressBtn.disabled = true;
+        actionStatus.textContent = 'Compressing…';
+
+        // Helper: create a canvas at a given size and try to find best quality
+        async function compressAtSize(w, h) {
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(originalImage, 0, 0, w, h);
+          // Binary search quality
+          let lo = 0.1, hi = 1.0, bestBlob = null, bestQ = 0;
+          for (let i = 0; i < 12; i++) {
+            const mid = (lo + hi) / 2;
+            const blob = await new Promise(res => canvas.toBlob(res, fmt, mid));
+            if (blob.size <= targetBytes) {
+              bestBlob = blob; bestQ = mid; lo = mid;
+            } else {
+              hi = mid;
+            }
+          }
+          return { blob: bestBlob, quality: bestQ };
+        }
+
+        // Start with original size and reduce until we can fit
+        let currentW = originalWidth;
+        let currentH = originalHeight;
+        const minDim = 1; // smallest allowed dimension
+        let bestResult = null;
+
+        while (currentW >= minDim && currentH >= minDim) {
+          const result = await compressAtSize(currentW, currentH);
+          if (result.blob) {
+            bestResult = { ...result, w: currentW, h: currentH };
+            break; // found a suitable size
+          }
+          // Scale down by 80% (keep aspect)
+          currentW = Math.max(minDim, Math.floor(currentW * 0.8));
+          currentH = Math.round(currentW / aspectRatio);
+          if (currentH < minDim) {
+            currentH = minDim;
+            currentW = Math.round(currentH * aspectRatio);
+          }
+        }
+
+        if (bestResult && bestResult.blob) {
+          resizedBlob = bestResult.blob;
+          const url = URL.createObjectURL(bestResult.blob);
+          resizedPreview.innerHTML = '';
+          const img = new Image();
+          img.src = url;
+          img.style.maxWidth = '100%'; img.style.maxHeight = '240px';
+          resizedPreview.appendChild(img);
+          downloadBtn.disabled = false;
+          actionStatus.textContent = `Compressed to ${(bestResult.blob.size/1024).toFixed(1)} KB (q=${bestResult.quality.toFixed(2)}, ${bestResult.w}×${bestResult.h}).`;
+        } else {
+          actionStatus.textContent = `Could not reach ${(targetBytes/1024).toFixed(0)} KB even at 1×1 px.`;
+        }
+        compressBtn.disabled = false;
+      });
+
+      // ---- Download ----
+      downloadBtn.addEventListener('click', () => {
+        if (!resizedBlob) { actionStatus.textContent = 'Nothing to download.'; return; }
+        const url = URL.createObjectURL(resizedBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        const ext = formatSelect.value === 'image/jpeg' ? 'jpg' : (formatSelect.value === 'image/webp' ? 'webp' : 'png');
+        a.download = `resized.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        actionStatus.textContent = 'Download started.';
+      });
+
+      formatSelect.addEventListener('change', updateQualityUI);
+
+      // Init
+      updateQualityUI();
+      updateModeUI();
+    })();
+  </script>
+</body>
+</html>
