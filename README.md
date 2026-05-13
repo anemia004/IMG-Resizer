@@ -9,7 +9,7 @@ No data ever leaves your device — all processing happens locally on canvas.
 - Compress to a target file size (JPEG / WebP) with automatic downscaling if needed
 - Preview original and processed images side by side
 - Download in PNG, JPEG, or WebP
-- Mobile-friendly retro Windows 95 aesthetic
+- Mobile-friendly retro Windows aesthetic
 
 ## How to Use
 
@@ -23,10 +23,13 @@ If you prefer to run it via localhost:
 ```bash
 cd img-resizer
 python -m http.server 8000
+```
 
-Then open http://localhost:8000 in your browser.
-  
+### Open your browser and go to:
+http://localhost:8000
+
 ## Privacy
-100% client-side — images are never uploaded on any host
-Content Security Policy blocks all network connections
-No external scripts, fonts, or CDNs — everything is self-contained
+
+- 100% client-side — images are never uploaded to any server
+- Content Security Policy blocks all network connections
+- No external scripts, fonts, or CDNs — everything is self-contained
