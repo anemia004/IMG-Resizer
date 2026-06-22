@@ -23,14 +23,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # This step installs Gradle AND generates the missing wrapper files
-      - name: Setup Gradle and generate wrapper
-        uses: gradle/gradle-build-action@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
         with:
-          gradle-version: '8.5'
-          arguments: wrapper --gradle-version 8.5
+          api-level: 34
+          build-tools: '34.0.0'
 
-      # Now the gradlew script exists, we can build the APK
+      - name: Generate Gradle wrapper (if missing)
+        run: |
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.5
+          fi
+
       - name: Build release APK
         run: ./gradlew assembleRelease
 
