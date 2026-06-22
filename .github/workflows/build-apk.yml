@@ -11,6 +11,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:                # ← this is the fix
+      contents: write           # allows uploading to releases
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,8 +34,7 @@ jobs:
           api-level: 34
           build-tools: '34.0.0'
 
-      # Create the debug keystore if it doesn't exist
-      - name: Create debug keystore
+      - name: Create debug keystore (if missing)
         run: |
           if [ ! -f ~/.android/debug.keystore ]; then
             mkdir -p ~/.android
@@ -55,7 +57,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: app/build/outputs/apk/release/app-release.apk   # now signed
+          path: app/build/outputs/apk/release/app-release.apk
 
       - name: Attach APK to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
