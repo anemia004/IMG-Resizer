@@ -415,23 +415,19 @@
         compressBtn.disabled = false;
       });
 
-      // ---- NEW DOWNLOAD LOGIC (no blob URL, sends base64 to native app) ----
+      // ---- Download ----
       downloadBtn.addEventListener('click', () => {
         if (!resizedBlob) { actionStatus.textContent = 'Nothing to download.'; return; }
-        const reader = new FileReader();
-        reader.onload = function() {
-          const base64 = reader.result.split(',')[1];  // remove "data:..." prefix
-          const ext = formatSelect.value === 'image/jpeg' ? 'jpg' : (formatSelect.value === 'image/webp' ? 'webp' : 'png');
-          const fileName = 'resized_' + Date.now() + '.' + ext;
-          // Call the native Android method (exposed as window.Android.saveImage)
-          if (window.Android && window.Android.saveImage) {
-            window.Android.saveImage(base64, fileName);
-            actionStatus.textContent = 'Saving to Downloads…';
-          } else {
-            actionStatus.textContent = 'Save function not available.';
-          }
-        };
-        reader.readAsDataURL(resizedBlob);
+        const url = URL.createObjectURL(resizedBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        const ext = formatSelect.value === 'image/jpeg' ? 'jpg' : (formatSelect.value === 'image/webp' ? 'webp' : 'png');
+        a.download = `resized.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        actionStatus.textContent = 'Download started.';
       });
 
       formatSelect.addEventListener('change', updateQualityUI);
