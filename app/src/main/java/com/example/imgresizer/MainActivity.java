@@ -26,13 +26,20 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
 
         webView = findViewById(R.id.webview);
+
+        // ---------- Essential WebView settings ----------
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setAllowFileAccess(true);
+        webView.getSettings().setDomStorageEnabled(true);           // helpful for some JS
+        webView.getSettings().setUseWideViewPort(true);            // fit screen width
+        webView.getSettings().setLoadWithOverviewMode(true);       // zoom out to fit
+        webView.getSettings().setSupportZoom(false);               // keep it simple
+        webView.getSettings().setBuiltInZoomControls(false);
+
         webView.setWebViewClient(new WebViewClient());
 
-        // This is the crucial part – handles file input clicks
+        // ---------- File chooser (for your "Open Image" button) ----------
         webView.setWebChromeClient(new WebChromeClient() {
-            // For Android 5.0+ (API 21+)
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
                                              FileChooserParams fileChooserParams) {
@@ -41,7 +48,6 @@ public class MainActivity extends Activity {
                 try {
                     startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE);
                 } catch (Exception e) {
-                    // If no app can handle the intent, clear callback
                     MainActivity.this.filePathCallback = null;
                     Toast.makeText(MainActivity.this, "Cannot open file chooser", Toast.LENGTH_SHORT).show();
                     return false;
@@ -50,7 +56,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Handle downloads (your "Download" button)
+        // ---------- Download listener (for your "💾 Download" button) ----------
         webView.setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent,
@@ -73,6 +79,7 @@ public class MainActivity extends Activity {
             }
         });
 
+        // ---------- Load your image resizer ----------
         webView.loadUrl("file:///android_asset/index.html");
     }
 
@@ -83,7 +90,6 @@ public class MainActivity extends Activity {
             if (filePathCallback != null) {
                 Uri[] results = null;
                 if (resultCode == RESULT_OK && data != null) {
-                    // Single file selected
                     Uri uri = data.getData();
                     if (uri != null) {
                         results = new Uri[]{uri};
