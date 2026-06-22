@@ -1,24 +1,29 @@
 package com.example.imgresizer;
 
 import android.app.Activity;
-import android.app.DownloadManager;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.webkit.DownloadListener;
-import android.webkit.URLUtil;
 import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 
 public class MainActivity extends Activity {
     private WebView webView;
@@ -43,9 +48,12 @@ public class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
         settings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);
 
+        // Expose native save method to JavaScript
+        webView.addJavascriptInterface(new AndroidInterface(this), "Android");
+
         webView.setWebViewClient(new WebViewClient());
 
-        // ---------- File chooser (with file copy for WebView compatibility) ----------
+        // File chooser (copies file to cache so WebView can read it)
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
@@ -63,30 +71,62 @@ public class MainActivity extends Activity {
             }
         });
 
-        // ---------- Download listener ----------
-        webView.setDownloadListener(new DownloadListener() {
-            @Override
-            public void onDownloadStart(String url, String userAgent,
-                                        String contentDisposition, String mimeType,
-                                        long contentLength) {
-                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
-                request.setMimeType(mimeType);
-                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
-                request.setTitle("IMG Resizer");
-                request.setDescription("Downloading resized image…");
-                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
-                request.allowScanningByMediaScanner();
-
-                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                if (dm != null) {
-                    dm.enqueue(request);
-                    Toast.makeText(MainActivity.this, "Download started", Toast.LENGTH_SHORT).show();
-                }
-            }
-        });
+        // No DownloadListener needed – download is handled by the JavaScript interface
 
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    // JavaScript interface for saving images
+    public class AndroidInterface {
+        private final Context context;
+
+        AndroidInterface(Context c) {
+            context = c;
+        }
+
+        @JavascriptInterface
+        public void saveImage(String base64Data, String fileName) {
+            try {
+                byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
+                Bitmap bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.length);
+                if (bitmap == null) {
+                    showToast("Failed to decode image");
+                    return;
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // Use MediaStore (Android 10+)
+                    ContentValues values = new ContentValues();
+                    values.put(MediaStore.Images.Media.DISPLAY_NAME, fileName);
+                    values.put(MediaStore.Images.Media.MIME_TYPE, "image/*");
+                    values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                    Uri uri = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                    if (uri != null) {
+                        OutputStream out = context.getContentResolver().openOutputStream(uri);
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+                        out.close();
+                        showToast("Saved to Downloads");
+                    }
+                } else {
+                    // For older Android, save directly to Downloads folder
+                    File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                    File file = new File(downloadsDir, fileName);
+                    FileOutputStream out = new FileOutputStream(file);
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+                    out.close();
+                    // Notify gallery
+                    MediaStore.Images.Media.insertImage(context.getContentResolver(), file.getAbsolutePath(), fileName, null);
+                    showToast("Saved to Downloads");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                showToast("Error saving image");
+            }
+        }
+
+        private void showToast(final String msg) {
+            runOnUiThread(() -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show());
+        }
     }
 
     @Override
@@ -94,12 +134,10 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == FILE_CHOOSER_RESULT_CODE) {
             if (filePathCallback == null) return;
-
             Uri[] results = null;
             if (resultCode == RESULT_OK && data != null) {
                 Uri originalUri = data.getData();
                 if (originalUri != null) {
-                    // Copy the file to app cache and return a file:// URI that WebView can read
                     Uri localUri = copyToLocalFile(originalUri);
                     if (localUri != null) {
                         results = new Uri[]{localUri};
@@ -117,7 +155,6 @@ public class MainActivity extends Activity {
      */
     private Uri copyToLocalFile(Uri sourceUri) {
         try {
-            // Determine file extension (default .jpg)
             String mime = getContentResolver().getType(sourceUri);
             String ext = ".jpg";
             if (mime != null) {
