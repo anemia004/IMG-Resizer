@@ -14,13 +14,26 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        debug {
+            storeFile file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
+            signingConfig signingConfigs.debug   // sign release with debug key
+        }
+        debug {
+            signingConfig signingConfigs.debug
         }
     }
 }
 
 dependencies {
-    // No extra dependencies needed - WebView is part of Android SDK
+    // No extra dependencies needed
 }
