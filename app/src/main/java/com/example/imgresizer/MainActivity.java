@@ -90,7 +90,6 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void saveImage(String base64Data, String fileName) {
-            // On Android 9 and below we still need runtime storage permission
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -102,7 +101,6 @@ public class MainActivity extends Activity {
                     return;
                 }
             }
-            // Already granted (or not needed on 10+) → save now
             performSave(base64Data, fileName);
         }
 
@@ -115,41 +113,42 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                // Determine the correct compress format from file extension
                 String lowerName = fileName.toLowerCase();
                 Bitmap.CompressFormat format;
+                String mimeType;
                 if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) {
                     format = Bitmap.CompressFormat.JPEG;
+                    mimeType = "image/jpeg";
                 } else if (lowerName.endsWith(".webp")) {
                     format = Bitmap.CompressFormat.WEBP;
+                    mimeType = "image/webp";
                 } else {
-                    format = Bitmap.CompressFormat.PNG;   // fallback
+                    format = Bitmap.CompressFormat.PNG;
+                    mimeType = "image/png";
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    // Android 10+ – use MediaStore, no permission required
+                    // Use MediaStore.Downloads (the proper Downloads collection)
                     ContentValues values = new ContentValues();
-                    values.put(MediaStore.Images.Media.DISPLAY_NAME, fileName);
-                    values.put(MediaStore.Images.Media.MIME_TYPE, "image/*");
-                    values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-                    Uri uri = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                    values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                    values.put(MediaStore.Downloads.MIME_TYPE, mimeType);
+                    Uri uri = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
                     if (uri != null) {
                         OutputStream out = context.getContentResolver().openOutputStream(uri);
-                        bitmap.compress(format, 92, out);   // high quality, adjust if needed
+                        bitmap.compress(format, 92, out);
                         out.close();
                         showToast("Saved to Downloads");
                     } else {
-                        showToast("Could not create file");
+                        showToast("Could not create file in Downloads");
                     }
                 } else {
-                    // Android 9 and below – direct file with permission
+                    // Older Android – direct file write (requires permission)
                     File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
                     if (!downloadsDir.exists()) downloadsDir.mkdirs();
                     File file = new File(downloadsDir, fileName);
                     FileOutputStream out = new FileOutputStream(file);
                     bitmap.compress(format, 92, out);
                     out.close();
-                    // Notify system media scanner
                     MediaStore.Images.Media.insertImage(context.getContentResolver(),
                             file.getAbsolutePath(), fileName, null);
                     showToast("Saved to Downloads");
@@ -165,7 +164,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Handle permission result for older Android versions
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
@@ -178,7 +176,7 @@ public class MainActivity extends Activity {
                     pendingFileName = null;
                 }
             } else {
-                Toast.makeText(this, "Storage permission denied – cannot save", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Storage permission denied", Toast.LENGTH_SHORT).show();
             }
         }
     }
