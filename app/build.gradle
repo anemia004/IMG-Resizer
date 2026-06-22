@@ -26,14 +26,11 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug   // sign release with debug key
-        }
-        debug {
             signingConfig signingConfigs.debug
         }
     }
 }
 
 dependencies {
-    // No extra dependencies needed
+    implementation 'androidx.core:core:1.13.1'   // required for permission helpers
 }
