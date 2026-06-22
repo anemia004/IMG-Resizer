@@ -1,9 +1,11 @@
 package com.example.imgresizer;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
@@ -20,6 +22,10 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -29,6 +35,10 @@ public class MainActivity extends Activity {
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
     private final static int FILE_CHOOSER_RESULT_CODE = 12345;
+    private final static int STORAGE_PERMISSION_REQUEST_CODE = 100;
+
+    private String pendingBase64 = null;
+    private String pendingFileName = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,12 +58,10 @@ public class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
         settings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);
 
-        // Expose native save method to JavaScript
         webView.addJavascriptInterface(new AndroidInterface(this), "Android");
 
         webView.setWebViewClient(new WebViewClient());
 
-        // File chooser (copies file to cache so WebView can read it)
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
@@ -71,21 +79,34 @@ public class MainActivity extends Activity {
             }
         });
 
-        // No DownloadListener needed – download is handled by the JavaScript interface
-
         webView.loadUrl("file:///android_asset/index.html");
     }
 
-    // JavaScript interface for saving images
+    // JavaScript interface – requests permission on older Android, then saves
     public class AndroidInterface {
         private final Context context;
 
-        AndroidInterface(Context c) {
-            context = c;
-        }
+        AndroidInterface(Context c) { context = c; }
 
         @JavascriptInterface
         public void saveImage(String base64Data, String fileName) {
+            // On Android 9 and below we still need runtime storage permission
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    pendingBase64 = base64Data;
+                    pendingFileName = fileName;
+                    ActivityCompat.requestPermissions(MainActivity.this,
+                            new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                            STORAGE_PERMISSION_REQUEST_CODE);
+                    return;
+                }
+            }
+            // Already granted (or not needed on 10+) → save now
+            performSave(base64Data, fileName);
+        }
+
+        private void performSave(String base64Data, String fileName) {
             try {
                 byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
                 Bitmap bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.length);
@@ -94,8 +115,19 @@ public class MainActivity extends Activity {
                     return;
                 }
 
+                // Determine the correct compress format from file extension
+                String lowerName = fileName.toLowerCase();
+                Bitmap.CompressFormat format;
+                if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) {
+                    format = Bitmap.CompressFormat.JPEG;
+                } else if (lowerName.endsWith(".webp")) {
+                    format = Bitmap.CompressFormat.WEBP;
+                } else {
+                    format = Bitmap.CompressFormat.PNG;   // fallback
+                }
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    // Use MediaStore (Android 10+)
+                    // Android 10+ – use MediaStore, no permission required
                     ContentValues values = new ContentValues();
                     values.put(MediaStore.Images.Media.DISPLAY_NAME, fileName);
                     values.put(MediaStore.Images.Media.MIME_TYPE, "image/*");
@@ -103,29 +135,51 @@ public class MainActivity extends Activity {
                     Uri uri = context.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
                     if (uri != null) {
                         OutputStream out = context.getContentResolver().openOutputStream(uri);
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+                        bitmap.compress(format, 92, out);   // high quality, adjust if needed
                         out.close();
                         showToast("Saved to Downloads");
+                    } else {
+                        showToast("Could not create file");
                     }
                 } else {
-                    // For older Android, save directly to Downloads folder
+                    // Android 9 and below – direct file with permission
                     File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                    if (!downloadsDir.exists()) downloadsDir.mkdirs();
                     File file = new File(downloadsDir, fileName);
                     FileOutputStream out = new FileOutputStream(file);
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+                    bitmap.compress(format, 92, out);
                     out.close();
-                    // Notify gallery
-                    MediaStore.Images.Media.insertImage(context.getContentResolver(), file.getAbsolutePath(), fileName, null);
+                    // Notify system media scanner
+                    MediaStore.Images.Media.insertImage(context.getContentResolver(),
+                            file.getAbsolutePath(), fileName, null);
                     showToast("Saved to Downloads");
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                showToast("Error saving image");
+                showToast("Error saving image: " + e.getMessage());
             }
         }
 
         private void showToast(final String msg) {
             runOnUiThread(() -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show());
+        }
+    }
+
+    // Handle permission result for older Android versions
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == STORAGE_PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                if (pendingBase64 != null && pendingFileName != null) {
+                    new AndroidInterface(this).performSave(pendingBase64, pendingFileName);
+                    pendingBase64 = null;
+                    pendingFileName = null;
+                }
+            } else {
+                Toast.makeText(this, "Storage permission denied – cannot save", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
@@ -149,10 +203,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * Copies the content from a content:// URI to a temp file in the app's cache dir,
-     * and returns a file:// URI that can be safely read by the WebView.
-     */
     private Uri copyToLocalFile(Uri sourceUri) {
         try {
             String mime = getContentResolver().getType(sourceUri);
