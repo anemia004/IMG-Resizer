@@ -3,6 +3,8 @@ name: Build APK
 on:
   push:
     branches: [ IMG ]
+    tags:
+      - 'v*'
   release:
     types: [ published ]
 
@@ -12,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy your img-resizer.htm into assets
+      - name: Copy img-resizer.htm into assets
         run: |
           mkdir -p app/src/main/assets
           cp img-resizer.htm app/src/main/assets/index.html
@@ -29,23 +31,34 @@ jobs:
           api-level: 34
           build-tools: '34.0.0'
 
+      # Create the debug keystore if it doesn't exist
+      - name: Create debug keystore
+        run: |
+          if [ ! -f ~/.android/debug.keystore ]; then
+            mkdir -p ~/.android
+            keytool -genkeypair -v -keystore ~/.android/debug.keystore \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug, OU=Android, O=Unknown, L=Unknown, ST=Unknown, C=US"
+          fi
+
       - name: Generate Gradle wrapper (if missing)
         run: |
           if [ ! -f gradlew ]; then
             gradle wrapper --gradle-version 8.5
           fi
 
-      - name: Build release APK
+      - name: Build signed release APK
         run: ./gradlew assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          path: app/build/outputs/apk/release/app-release.apk   # now signed
 
       - name: Attach APK to GitHub Release
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/app-release-unsigned.apk
+          files: app/build/outputs/apk/release/app-release.apk
