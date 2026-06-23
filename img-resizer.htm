@@ -371,7 +371,6 @@
             compressBtn.disabled = false;
             return;
           }
-          // If still too large (unlikely but possible), fall through to resize
         }
 
         // 2) Try to reach target using only quality adjustment (no dimension change)
@@ -407,7 +406,6 @@
           if (curSize > targetBytes) {
             w = Math.max(1, Math.floor(w * scaleAdjust));
           } else {
-            // size is smaller than target – we can increase a bit for more quality
             w = Math.min(originalWidth, Math.floor(w * scaleAdjust));
           }
           h = Math.round(w / aspectRatio);
