@@ -356,7 +356,6 @@
         compressBtn.disabled = true;
         actionStatus.textContent = 'Compressing…';
 
-        // Helper: create a canvas at a given size and try to find best quality
         async function compressAtSize(w, h) {
           const canvas = document.createElement('canvas');
           canvas.width = w; canvas.height = h;
@@ -364,7 +363,6 @@
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(originalImage, 0, 0, w, h);
-          // Binary search quality
           let lo = 0.1, hi = 1.0, bestBlob = null, bestQ = 0;
           for (let i = 0; i < 12; i++) {
             const mid = (lo + hi) / 2;
@@ -378,19 +376,17 @@
           return { blob: bestBlob, quality: bestQ };
         }
 
-        // Start with original size and reduce until we can fit
         let currentW = originalWidth;
         let currentH = originalHeight;
-        const minDim = 1; // smallest allowed dimension
+        const minDim = 1;
         let bestResult = null;
 
         while (currentW >= minDim && currentH >= minDim) {
           const result = await compressAtSize(currentW, currentH);
           if (result.blob) {
             bestResult = { ...result, w: currentW, h: currentH };
-            break; // found a suitable size
+            break;
           }
-          // Scale down by 80% (keep aspect)
           currentW = Math.max(minDim, Math.floor(currentW * 0.8));
           currentH = Math.round(currentW / aspectRatio);
           if (currentH < minDim) {
@@ -415,15 +411,14 @@
         compressBtn.disabled = false;
       });
 
-      // ---- NEW DOWNLOAD LOGIC (no blob URL, sends base64 to native app) ----
+      // ---- NEW DOWNLOAD LOGIC (sends base64 to native app) ----
       downloadBtn.addEventListener('click', () => {
         if (!resizedBlob) { actionStatus.textContent = 'Nothing to download.'; return; }
         const reader = new FileReader();
         reader.onload = function() {
-          const base64 = reader.result.split(',')[1];  // remove "data:..." prefix
+          const base64 = reader.result.split(',')[1];
           const ext = formatSelect.value === 'image/jpeg' ? 'jpg' : (formatSelect.value === 'image/webp' ? 'webp' : 'png');
           const fileName = 'resized_' + Date.now() + '.' + ext;
-          // Call the native Android method (exposed as window.Android.saveImage)
           if (window.Android && window.Android.saveImage) {
             window.Android.saveImage(base64, fileName);
             actionStatus.textContent = 'Saving to Downloads…';
@@ -434,9 +429,52 @@
         reader.readAsDataURL(resizedBlob);
       });
 
-      formatSelect.addEventListener('change', updateQualityUI);
+      // ---- RESET / CLEAR function (attached to the ✕ button) ----
+      function resetApp() {
+        // Clear file input
+        fileInput.value = "";
+        // Reset stored image data
+        originalImage = null;
+        originalWidth = 0;
+        originalHeight = 0;
+        aspectRatio = 1;
+        currentPxW = 800;
+        currentPxH = 600;
+        resizedBlob = null;
+        // Reset dimension fields
+        widthInput.value = 800;
+        heightInput.value = 600;
+        // Reset previews
+        originalPreview.innerHTML = '<span>Original</span>';
+        resizedPreview.innerHTML = '<span>Processed</span>';
+        originalInfo.textContent = 'No image loaded.';
+        actionStatus.textContent = 'Ready.';
+        downloadBtn.disabled = true;
+        // Reset radio buttons & other controls to defaults
+        document.querySelector('input[name="resizeMode"][value="dimensions"]').checked = true;
+        document.querySelector('input[name="unit"][value="px"]').checked = true;
+        aspectCheckbox.checked = true;
+        dpiInput.value = 96;
+        targetKBInput.value = 100;
+        formatSelect.value = 'image/png';
+        qualitySlider.value = 0.92;
+        // Update dependent UI
+        updateQualityUI();
+        updateModeUI();
+        pixelEquivalent.textContent = '';
+      }
+
+      // ---- Attach to window buttons ----
+      // ✕ button (third .title-btn) → clear everything
+      const closeBtn = document.querySelector('.title-btn:nth-child(3)');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', resetApp);
+      }
+
+      // — and □ buttons are intentionally left without any function
 
       // Init
+      formatSelect.addEventListener('change', updateQualityUI);
       updateQualityUI();
       updateModeUI();
     })();
