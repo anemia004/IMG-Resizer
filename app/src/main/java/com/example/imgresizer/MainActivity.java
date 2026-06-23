@@ -149,22 +149,23 @@ public class MainActivity extends Activity {
             }
         }
 
-        // NEW – called by the web page when ✕ is clicked
+        // Clear data and reload the page for a true reset
         @JavascriptInterface
         public void clearAppData() {
-            // Run on UI thread because WebView operations must be on UI thread
             runOnUiThread(() -> {
-                // Clear WebView cache
                 if (webView != null) {
+                    // Clear all WebView caches
                     webView.clearCache(true);
-                    // Clear DOM storage (localStorage, etc.)
                     WebStorage.getInstance().deleteAllData();
-                    // Also clear any form data (not needed but harmless)
                     webView.clearFormData();
                     webView.clearHistory();
+
+                    // Delete the temporary image file
+                    deleteLastTempFile();
+
+                    // Reload the page to start completely fresh
+                    webView.reload();
                 }
-                // Delete the temporary file used for the last picked image
-                deleteLastTempFile();
             });
         }
 
@@ -250,7 +251,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        // Clean up everything when the app is closed
         deleteLastTempFile();
         if (webView != null) {
             webView.clearCache(true);
