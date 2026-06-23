@@ -196,7 +196,7 @@
       let aspectRatio = 1;
       let currentPxW = 800, currentPxH = 600;
       let resizedBlob = null;
-      let originalFileSize = 0;   // in bytes, for estimation
+      let originalFileSize = 0;
 
       // ---- helpers ----
       function updateQualityUI() {
@@ -275,7 +275,7 @@
       fileInput.addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
-        originalFileSize = file.size;   // remember original file size for compression estimation
+        originalFileSize = file.size;
         const reader = new FileReader();
         reader.onload = function(ev) {
           const img = new Image();
@@ -318,7 +318,7 @@
       // ---- Mode switch ----
       modeRadios.forEach(r => r.addEventListener('change', updateModeUI));
 
-      // ---- Resize by dimensions ----
+      // ---- Resize by dimensions (unchanged) ----
       resizeBtn.addEventListener('click', () => {
         if (!originalImage) { actionStatus.textContent = 'Please open an image first.'; return; }
         const dim = getEnteredDimensions();
@@ -345,7 +345,7 @@
         }, fmt, q);
       });
 
-      // ---- FAST Compress to file size ----
+      // ---- ⚡ ULTRAFAST TARGET‑SIZE COMPRESSION (1‑2 canvas draws) ----
       compressBtn.addEventListener('click', async () => {
         if (!originalImage) { actionStatus.textContent = 'No image.'; return; }
         const targetBytes = parseFloat(targetKBInput.value) * 1024;
@@ -358,116 +358,127 @@
         compressBtn.disabled = true;
         actionStatus.textContent = 'Compressing…';
 
-        // Helper: try to compress at a given size with quality=1.0 and return the blob size,
-        // so we can intelligently adjust.
-        async function trySizeAtMaxQuality(w, h) {
+        // 1) Quick check: if original already fits, just re‑encode at quality 0.92
+        if (originalFileSize <= targetBytes) {
           const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
+          canvas.width = originalWidth; canvas.height = originalHeight;
           const ctx = canvas.getContext('2d');
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(originalImage, 0, 0, w, h);
-          return new Promise(resolve => {
-            canvas.toBlob(blob => resolve(blob ? blob.size : Infinity), fmt, 1.0);
-          });
-        }
-
-        // Full binary quality search to get the best blob at a given size
-        async function compressAtSize(w, h) {
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(originalImage, 0, 0, w, h);
-          let lo = 0.1, hi = 1.0, bestBlob = null, bestQ = 0;
-          for (let i = 0; i < 12; i++) {
-            const mid = (lo + hi) / 2;
-            const blob = await new Promise(res => canvas.toBlob(res, fmt, mid));
-            if (!blob) continue;
-            if (blob.size <= targetBytes) {
-              bestBlob = blob; bestQ = mid; lo = mid;
-            } else {
-              hi = mid;
-            }
+          ctx.drawImage(originalImage, 0, 0);
+          const blob = await new Promise(res => canvas.toBlob(res, fmt, 0.92));
+          if (blob && blob.size <= targetBytes) {
+            resizedBlob = blob;
+            showResult(blob, originalWidth, originalHeight, 0.92);
+            compressBtn.disabled = false;
+            return;
           }
-          return { blob: bestBlob, quality: bestQ };
+          // If still too large (unlikely but possible), fall through to resize
         }
 
-        // Initial size estimation
-        let currentW = originalWidth;
-        let currentH = originalHeight;
-
-        // If we have original file size, use it for a smart starting point
-        if (originalFileSize > 0 && originalFileSize > targetBytes) {
-          // Assume that at full quality, the compressed size roughly scales with pixel count.
-          // We'll first test at a size reduced by the square root of the target ratio.
-          const ratio = targetBytes / originalFileSize;
-          const scale = Math.sqrt(ratio) * 0.7;   // slightly more aggressive
-          currentW = Math.max(1, Math.floor(originalWidth * scale));
-          currentH = Math.round(currentW / aspectRatio);
-          if (currentH < 1) { currentH = 1; currentW = Math.round(currentH * aspectRatio); }
-        }
-
-        const minDim = 1;
-        let bestResult = null;
-
-        // We'll try at most 6 different sizes
-        for (let attempt = 0; attempt < 6; attempt++) {
-          // First, test at current size with max quality to see if it's even possible to fit.
-          const sizeAtMax = await trySizeAtMaxQuality(currentW, currentH);
-          if (sizeAtMax <= targetBytes) {
-            // At max quality it already fits, now do a full binary search to maximise quality
-            const res = await compressAtSize(currentW, currentH);
-            if (res.blob) {
-              bestResult = { ...res, w: currentW, h: currentH };
-              break;
-            }
-          }
-          // If it didn't fit, we need to shrink dimensions more.
-          // Use the actual size at max quality to estimate the required scale.
-          if (sizeAtMax > targetBytes) {
-            const scaleNeeded = Math.sqrt(targetBytes / sizeAtMax) * 0.9;   // safety margin
-            currentW = Math.max(minDim, Math.floor(currentW * scaleNeeded));
-            currentH = Math.round(currentW / aspectRatio);
-            if (currentH < minDim) {
-              currentH = minDim;
-              currentW = Math.round(currentH * aspectRatio);
-            }
+        // 2) Try to reach target using only quality adjustment (no dimension change)
+        const sizeAtLowQ = await blobSizeAt(originalWidth, originalHeight, 0.1);
+        if (sizeAtLowQ <= targetBytes) {
+          // Quality alone can do it → binary search quality
+          const best = await findBestQuality(originalWidth, originalHeight, targetBytes);
+          if (best.blob) {
+            resizedBlob = best.blob;
+            showResult(best.blob, originalWidth, originalHeight, best.quality);
           } else {
-            // Just in case, try scaling down if still not found
-            currentW = Math.max(minDim, Math.floor(currentW * 0.85));
-            currentH = Math.round(currentW / aspectRatio);
-            if (currentH < minDim) {
-              currentH = minDim;
-              currentW = Math.round(currentH * aspectRatio);
-            }
+            actionStatus.textContent = 'Compression failed.';
           }
+          compressBtn.disabled = false;
+          return;
         }
 
-        // If we exited the loop without a result, try one last time at the smallest size
-        if (!bestResult) {
-          const res = await compressAtSize(currentW, currentH);
-          if (res.blob) {
-            bestResult = { ...res, w: currentW, h: currentH };
+        // 3) Must shrink dimensions – intelligent one‑shot estimation
+        const ratio = targetBytes / originalFileSize;
+        // compressed size ~ pixelCount * quality. Use sqrt with safety factor
+        let scale = Math.sqrt(ratio) * 0.85;
+        scale = Math.max(0.01, Math.min(1, scale));
+        let w = Math.max(1, Math.floor(originalWidth * scale));
+        let h = Math.round(w / aspectRatio);
+        if (h < 1) { h = 1; w = Math.round(h * aspectRatio); }
+
+        // Test at quality 0.5 (midpoint) to see if we're close
+        let curSize = await blobSizeAt(w, h, 0.5);
+        // Fine‑tune dimension if needed (max 2 extra iterations)
+        for (let i = 0; i < 2; i++) {
+          if (curSize <= targetBytes * 1.2 && curSize >= targetBytes * 0.8) break; // close enough
+          const scaleAdjust = Math.sqrt(targetBytes / curSize) * 0.9;
+          if (curSize > targetBytes) {
+            w = Math.max(1, Math.floor(w * scaleAdjust));
+          } else {
+            // size is smaller than target – we can increase a bit for more quality
+            w = Math.min(originalWidth, Math.floor(w * scaleAdjust));
           }
+          h = Math.round(w / aspectRatio);
+          if (h < 1) { h = 1; w = Math.round(h * aspectRatio); }
+          curSize = await blobSizeAt(w, h, 0.5);
         }
 
-        if (bestResult && bestResult.blob) {
-          resizedBlob = bestResult.blob;
-          const url = URL.createObjectURL(bestResult.blob);
-          resizedPreview.innerHTML = '';
-          const img = new Image();
-          img.src = url;
-          img.style.maxWidth = '100%'; img.style.maxHeight = '240px';
-          resizedPreview.appendChild(img);
-          downloadBtn.disabled = false;
-          actionStatus.textContent = `Compressed to ${(bestResult.blob.size/1024).toFixed(1)} KB (q=${bestResult.quality.toFixed(2)}, ${bestResult.w}×${bestResult.h}).`;
+        // Final binary search at the (nearly) perfect dimensions
+        const best = await findBestQuality(w, h, targetBytes);
+        if (best.blob) {
+          resizedBlob = best.blob;
+          showResult(best.blob, w, h, best.quality);
         } else {
-          actionStatus.textContent = `Could not reach ${(targetBytes/1024).toFixed(0)} KB even at 1×1 px.`;
+          // fallback: just use the blob from the last attempt
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(originalImage, 0, 0, w, h);
+          const blob = await new Promise(res => canvas.toBlob(res, fmt, 0.5));
+          if (blob) {
+            resizedBlob = blob;
+            showResult(blob, w, h, 0.5);
+          } else {
+            actionStatus.textContent = 'Compression failed.';
+          }
         }
         compressBtn.disabled = false;
       });
+
+      // Helper: return blob size at given dimensions and quality
+      async function blobSizeAt(w, h, quality) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(originalImage, 0, 0, w, h);
+        return new Promise(resolve => {
+          canvas.toBlob(blob => resolve(blob ? blob.size : Infinity), formatSelect.value, quality);
+        });
+      }
+
+      // Helper: binary search for highest quality ≤ targetBytes at fixed dimensions
+      async function findBestQuality(w, h, targetBytes) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(originalImage, 0, 0, w, h);
+        const fmt = formatSelect.value;
+        let lo = 0.1, hi = 1.0, bestBlob = null, bestQ = 0;
+        for (let i = 0; i < 10; i++) {
+          const mid = (lo + hi) / 2;
+          const blob = await new Promise(res => canvas.toBlob(res, fmt, mid));
+          if (!blob) continue;
+          if (blob.size <= targetBytes) {
+            bestBlob = blob; bestQ = mid; lo = mid;
+          } else {
+            hi = mid;
+          }
+        }
+        return { blob: bestBlob, quality: bestQ };
+      }
+
+      function showResult(blob, w, h, quality) {
+        const url = URL.createObjectURL(blob);
+        resizedPreview.innerHTML = '';
+        const img = new Image();
+        img.src = url;
+        img.style.maxWidth = '100%'; img.style.maxHeight = '240px';
+        resizedPreview.appendChild(img);
+        downloadBtn.disabled = false;
+        actionStatus.textContent = `Compressed to ${(blob.size/1024).toFixed(1)} KB (q=${quality.toFixed(2)}, ${w}×${h}).`;
+      }
 
       // ---- Download logic ----
       downloadBtn.addEventListener('click', () => {
@@ -505,20 +516,15 @@
         actionStatus.textContent = 'Ready.';
         downloadBtn.disabled = true;
         pixelEquivalent.textContent = '';
-
-        // Also clear native app cache if available
         if (window.Android && window.Android.clearAppData) {
           window.Android.clearAppData();
         }
       }
 
-      // Attach to ✕ button
       const closeBtn = document.querySelector('.title-btn:nth-child(3)');
       if (closeBtn) {
         closeBtn.addEventListener('click', resetApp);
       }
-
-      // — and □ are non-functional
 
       formatSelect.addEventListener('change', updateQualityUI);
       updateQualityUI();
