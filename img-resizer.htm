@@ -196,6 +196,7 @@
       let aspectRatio = 1;
       let currentPxW = 800, currentPxH = 600;
       let resizedBlob = null;
+      let originalFileSize = 0;   // in bytes, for estimation
 
       // ---- helpers ----
       function updateQualityUI() {
@@ -274,6 +275,7 @@
       fileInput.addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
+        originalFileSize = file.size;   // remember original file size for compression estimation
         const reader = new FileReader();
         reader.onload = function(ev) {
           const img = new Image();
@@ -343,7 +345,7 @@
         }, fmt, q);
       });
 
-      // ---- Compress to file size (improved with auto‑downscale) ----
+      // ---- FAST Compress to file size ----
       compressBtn.addEventListener('click', async () => {
         if (!originalImage) { actionStatus.textContent = 'No image.'; return; }
         const targetBytes = parseFloat(targetKBInput.value) * 1024;
@@ -356,6 +358,21 @@
         compressBtn.disabled = true;
         actionStatus.textContent = 'Compressing…';
 
+        // Helper: try to compress at a given size with quality=1.0 and return the blob size,
+        // so we can intelligently adjust.
+        async function trySizeAtMaxQuality(w, h) {
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(originalImage, 0, 0, w, h);
+          return new Promise(resolve => {
+            canvas.toBlob(blob => resolve(blob ? blob.size : Infinity), fmt, 1.0);
+          });
+        }
+
+        // Full binary quality search to get the best blob at a given size
         async function compressAtSize(w, h) {
           const canvas = document.createElement('canvas');
           canvas.width = w; canvas.height = h;
@@ -367,6 +384,7 @@
           for (let i = 0; i < 12; i++) {
             const mid = (lo + hi) / 2;
             const blob = await new Promise(res => canvas.toBlob(res, fmt, mid));
+            if (!blob) continue;
             if (blob.size <= targetBytes) {
               bestBlob = blob; bestQ = mid; lo = mid;
             } else {
@@ -376,22 +394,62 @@
           return { blob: bestBlob, quality: bestQ };
         }
 
+        // Initial size estimation
         let currentW = originalWidth;
         let currentH = originalHeight;
+
+        // If we have original file size, use it for a smart starting point
+        if (originalFileSize > 0 && originalFileSize > targetBytes) {
+          // Assume that at full quality, the compressed size roughly scales with pixel count.
+          // We'll first test at a size reduced by the square root of the target ratio.
+          const ratio = targetBytes / originalFileSize;
+          const scale = Math.sqrt(ratio) * 0.7;   // slightly more aggressive
+          currentW = Math.max(1, Math.floor(originalWidth * scale));
+          currentH = Math.round(currentW / aspectRatio);
+          if (currentH < 1) { currentH = 1; currentW = Math.round(currentH * aspectRatio); }
+        }
+
         const minDim = 1;
         let bestResult = null;
 
-        while (currentW >= minDim && currentH >= minDim) {
-          const result = await compressAtSize(currentW, currentH);
-          if (result.blob) {
-            bestResult = { ...result, w: currentW, h: currentH };
-            break;
+        // We'll try at most 6 different sizes
+        for (let attempt = 0; attempt < 6; attempt++) {
+          // First, test at current size with max quality to see if it's even possible to fit.
+          const sizeAtMax = await trySizeAtMaxQuality(currentW, currentH);
+          if (sizeAtMax <= targetBytes) {
+            // At max quality it already fits, now do a full binary search to maximise quality
+            const res = await compressAtSize(currentW, currentH);
+            if (res.blob) {
+              bestResult = { ...res, w: currentW, h: currentH };
+              break;
+            }
           }
-          currentW = Math.max(minDim, Math.floor(currentW * 0.8));
-          currentH = Math.round(currentW / aspectRatio);
-          if (currentH < minDim) {
-            currentH = minDim;
-            currentW = Math.round(currentH * aspectRatio);
+          // If it didn't fit, we need to shrink dimensions more.
+          // Use the actual size at max quality to estimate the required scale.
+          if (sizeAtMax > targetBytes) {
+            const scaleNeeded = Math.sqrt(targetBytes / sizeAtMax) * 0.9;   // safety margin
+            currentW = Math.max(minDim, Math.floor(currentW * scaleNeeded));
+            currentH = Math.round(currentW / aspectRatio);
+            if (currentH < minDim) {
+              currentH = minDim;
+              currentW = Math.round(currentH * aspectRatio);
+            }
+          } else {
+            // Just in case, try scaling down if still not found
+            currentW = Math.max(minDim, Math.floor(currentW * 0.85));
+            currentH = Math.round(currentW / aspectRatio);
+            if (currentH < minDim) {
+              currentH = minDim;
+              currentW = Math.round(currentH * aspectRatio);
+            }
+          }
+        }
+
+        // If we exited the loop without a result, try one last time at the smallest size
+        if (!bestResult) {
+          const res = await compressAtSize(currentW, currentH);
+          if (res.blob) {
+            bestResult = { ...res, w: currentW, h: currentH };
           }
         }
 
@@ -411,7 +469,7 @@
         compressBtn.disabled = false;
       });
 
-      // ---- NEW DOWNLOAD LOGIC (sends base64 to native app) ----
+      // ---- Download logic ----
       downloadBtn.addEventListener('click', () => {
         if (!resizedBlob) { actionStatus.textContent = 'Nothing to download.'; return; }
         const reader = new FileReader();
@@ -429,11 +487,9 @@
         reader.readAsDataURL(resizedBlob);
       });
 
-      // ---- RESET / CLEAR function (attached to the ✕ button) ----
+      // ---- RESET / CLEAR function (UI + app cache) ----
       function resetApp() {
-        // Clear file input
         fileInput.value = "";
-        // Reset stored image data
         originalImage = null;
         originalWidth = 0;
         originalHeight = 0;
@@ -441,39 +497,29 @@
         currentPxW = 800;
         currentPxH = 600;
         resizedBlob = null;
-        // Reset dimension fields
-        widthInput.value = 800;
-        heightInput.value = 600;
-        // Reset previews
+        originalFileSize = 0;
+        setDisplayedDimensions(800, 600);
         originalPreview.innerHTML = '<span>Original</span>';
         resizedPreview.innerHTML = '<span>Processed</span>';
         originalInfo.textContent = 'No image loaded.';
         actionStatus.textContent = 'Ready.';
         downloadBtn.disabled = true;
-        // Reset radio buttons & other controls to defaults
-        document.querySelector('input[name="resizeMode"][value="dimensions"]').checked = true;
-        document.querySelector('input[name="unit"][value="px"]').checked = true;
-        aspectCheckbox.checked = true;
-        dpiInput.value = 96;
-        targetKBInput.value = 100;
-        formatSelect.value = 'image/png';
-        qualitySlider.value = 0.92;
-        // Update dependent UI
-        updateQualityUI();
-        updateModeUI();
         pixelEquivalent.textContent = '';
+
+        // Also clear native app cache if available
+        if (window.Android && window.Android.clearAppData) {
+          window.Android.clearAppData();
+        }
       }
 
-      // ---- Attach to window buttons ----
-      // ✕ button (third .title-btn) → clear everything
+      // Attach to ✕ button
       const closeBtn = document.querySelector('.title-btn:nth-child(3)');
       if (closeBtn) {
         closeBtn.addEventListener('click', resetApp);
       }
 
-      // — and □ buttons are intentionally left without any function
+      // — and □ are non-functional
 
-      // Init
       formatSelect.addEventListener('change', updateQualityUI);
       updateQualityUI();
       updateModeUI();
