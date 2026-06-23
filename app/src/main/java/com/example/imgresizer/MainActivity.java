@@ -16,6 +16,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
+import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
@@ -37,6 +38,7 @@ public class MainActivity extends Activity {
 
     private String pendingBase64 = null;
     private String pendingFileName = null;
+    private File lastTempFile = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,7 +82,7 @@ public class MainActivity extends Activity {
         webView.loadUrl("file:///android_asset/index.html");
     }
 
-    // JavaScript interface – requests permission on older Android, then saves
+    // JavaScript interface
     public class AndroidInterface {
         private final Context context;
 
@@ -104,11 +106,8 @@ public class MainActivity extends Activity {
 
         private void performSave(String base64Data, String fileName) {
             try {
-                // Decode the base64 string directly to bytes – this is the final image file
                 byte[] imageBytes = Base64.decode(base64Data, Base64.DEFAULT);
-
-                // Determine MIME type from file extension
-                String mimeType = "image/png";   // default
+                String mimeType = "image/png";
                 String lowerName = fileName.toLowerCase();
                 if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) {
                     mimeType = "image/jpeg";
@@ -117,7 +116,6 @@ public class MainActivity extends Activity {
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    // Use MediaStore.Downloads (proper Downloads collection)
                     ContentValues values = new ContentValues();
                     values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
                     values.put(MediaStore.Downloads.MIME_TYPE, mimeType);
@@ -135,14 +133,12 @@ public class MainActivity extends Activity {
                         showToast("Could not create file in Downloads");
                     }
                 } else {
-                    // Older Android – direct file write
                     File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
                     if (!downloadsDir.exists()) downloadsDir.mkdirs();
                     File file = new File(downloadsDir, fileName);
                     FileOutputStream out = new FileOutputStream(file);
                     out.write(imageBytes);
                     out.close();
-                    // Notify media scanner
                     MediaStore.Images.Media.insertImage(context.getContentResolver(),
                             file.getAbsolutePath(), fileName, null);
                     showToast("Saved to Downloads");
@@ -151,6 +147,25 @@ public class MainActivity extends Activity {
                 e.printStackTrace();
                 showToast("Error saving image: " + e.getMessage());
             }
+        }
+
+        // NEW – called by the web page when ✕ is clicked
+        @JavascriptInterface
+        public void clearAppData() {
+            // Run on UI thread because WebView operations must be on UI thread
+            runOnUiThread(() -> {
+                // Clear WebView cache
+                if (webView != null) {
+                    webView.clearCache(true);
+                    // Clear DOM storage (localStorage, etc.)
+                    WebStorage.getInstance().deleteAllData();
+                    // Also clear any form data (not needed but harmless)
+                    webView.clearFormData();
+                    webView.clearHistory();
+                }
+                // Delete the temporary file used for the last picked image
+                deleteLastTempFile();
+            });
         }
 
         private void showToast(final String msg) {
@@ -197,6 +212,7 @@ public class MainActivity extends Activity {
 
     private Uri copyToLocalFile(Uri sourceUri) {
         try {
+            deleteLastTempFile();
             String mime = getContentResolver().getType(sourceUri);
             String ext = ".jpg";
             if (mime != null) {
@@ -215,11 +231,30 @@ public class MainActivity extends Activity {
             }
             in.close();
             out.close();
+            lastTempFile = tempFile;
             return Uri.fromFile(tempFile);
         } catch (Exception e) {
             e.printStackTrace();
             Toast.makeText(this, "Failed to open image", Toast.LENGTH_SHORT).show();
             return null;
+        }
+    }
+
+    private void deleteLastTempFile() {
+        if (lastTempFile != null && lastTempFile.exists()) {
+            lastTempFile.delete();
+            lastTempFile = null;
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Clean up everything when the app is closed
+        deleteLastTempFile();
+        if (webView != null) {
+            webView.clearCache(true);
+            WebStorage.getInstance().deleteAllData();
         }
     }
 
