@@ -28,7 +28,7 @@ No data ever leaves your device — all processing happens locally on canvas.
 
    * Pixels (px), or
    * Centimeters (cm).
-4. Optionally set a target file size for automatic compression.
+4. OR set a target file size for compression.
 5. Preview the processed image.
 6. Tap **Download** to store the resized image on your device.
 
