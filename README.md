@@ -11,25 +11,32 @@ No data ever leaves your device — all processing happens locally on canvas.
 - Download in PNG, JPEG, or WebP
 - Mobile-friendly retro Windows aesthetic
 
-## How to Use
+#### How to Install & Use (Android APK)
 
-### Option 1: Open directly
-Double-click `IMG_Resize.html`
-No server required — works offline.
+### Installation
 
-### Option 2: Local server (Python)
-If you prefer to run it via localhost:
+1. Download the latest ` .apk` from the Releases section.
+2. Open the APK file on your Android device.
+3. If prompted, allow installation from unknown sources.
+4. Complete the installation and launch the app.
 
-```bash
-cd img-resizer
-python -m http.server 8000
-```
+### Usage
 
-### Open your browser and go to:
-http://localhost:8000
+1. Open **IMG Resizer**.
+2. Tap **Choose file** and choose a photo from your device.
+3. Enter the desired dimensions:
 
-## Privacy
+   * Pixels (px), or
+   * Centimeters (cm).
+4. Optionally set a target file size for automatic compression.
+5. Preview the processed image.
+6. Tap **Download** to store the resized image on your device.
 
-- 100% client-side — images are never uploaded to any server
-- Content Security Policy blocks all network connections
-- No external scripts, fonts, or CDNs — everything is self-contained
+### Notes
+
+* Works completely offline.
+* No internet connection is required.
+* Images never leave your device.
+* All resizing and compression are performed locally on your phone.
+
+
