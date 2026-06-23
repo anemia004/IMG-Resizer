@@ -6,8 +6,6 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -106,49 +104,45 @@ public class MainActivity extends Activity {
 
         private void performSave(String base64Data, String fileName) {
             try {
-                byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
-                Bitmap bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.length);
-                if (bitmap == null) {
-                    showToast("Failed to decode image");
-                    return;
-                }
+                // Decode the base64 string directly to bytes – this is the final image file
+                byte[] imageBytes = Base64.decode(base64Data, Base64.DEFAULT);
 
+                // Determine MIME type from file extension
+                String mimeType = "image/png";   // default
                 String lowerName = fileName.toLowerCase();
-                Bitmap.CompressFormat format;
-                String mimeType;
                 if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) {
-                    format = Bitmap.CompressFormat.JPEG;
                     mimeType = "image/jpeg";
                 } else if (lowerName.endsWith(".webp")) {
-                    format = Bitmap.CompressFormat.WEBP;
                     mimeType = "image/webp";
-                } else {
-                    format = Bitmap.CompressFormat.PNG;
-                    mimeType = "image/png";
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    // Use MediaStore.Downloads (the proper Downloads collection)
+                    // Use MediaStore.Downloads (proper Downloads collection)
                     ContentValues values = new ContentValues();
                     values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
                     values.put(MediaStore.Downloads.MIME_TYPE, mimeType);
                     Uri uri = context.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
                     if (uri != null) {
                         OutputStream out = context.getContentResolver().openOutputStream(uri);
-                        bitmap.compress(format, 92, out);
-                        out.close();
-                        showToast("Saved to Downloads");
+                        if (out != null) {
+                            out.write(imageBytes);
+                            out.close();
+                            showToast("Saved to Downloads");
+                        } else {
+                            showToast("Failed to open output stream");
+                        }
                     } else {
                         showToast("Could not create file in Downloads");
                     }
                 } else {
-                    // Older Android – direct file write (requires permission)
+                    // Older Android – direct file write
                     File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
                     if (!downloadsDir.exists()) downloadsDir.mkdirs();
                     File file = new File(downloadsDir, fileName);
                     FileOutputStream out = new FileOutputStream(file);
-                    bitmap.compress(format, 92, out);
+                    out.write(imageBytes);
                     out.close();
+                    // Notify media scanner
                     MediaStore.Images.Media.insertImage(context.getContentResolver(),
                             file.getAbsolutePath(), fileName, null);
                     showToast("Saved to Downloads");
