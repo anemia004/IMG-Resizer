@@ -318,7 +318,7 @@
       // ---- Mode switch ----
       modeRadios.forEach(r => r.addEventListener('change', updateModeUI));
 
-      // ---- Resize by dimensions (unchanged) ----
+      // ---- Resize by dimensions ----
       resizeBtn.addEventListener('click', () => {
         if (!originalImage) { actionStatus.textContent = 'Please open an image first.'; return; }
         const dim = getEnteredDimensions();
@@ -345,7 +345,7 @@
         }, fmt, q);
       });
 
-      // ---- ⚡ ULTRAFAST TARGET‑SIZE COMPRESSION (1‑2 canvas draws) ----
+      // ---- ⚡ FAST & ACCURATE compress to file size ----
       compressBtn.addEventListener('click', async () => {
         if (!originalImage) { actionStatus.textContent = 'No image.'; return; }
         const targetBytes = parseFloat(targetKBInput.value) * 1024;
@@ -358,562 +358,56 @@
         compressBtn.disabled = true;
         actionStatus.textContent = 'Compressing…';
 
-        // 1) Quick check: if original already fits, just re‑encode at quality 0.92
+        async function blobSizeAt(w, h, quality) {
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(originalImage, 0, 0, w, h);
+          return new Promise(resolve => {
+            canvas.toBlob(blob => resolve(blob ? blob.size : Infinity), fmt, quality);
+          });
+        }
+
+        async function findBestQuality(w, h) {
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(originalImage, 0, 0, w, h);
+          let lo = 0.1, hi = 1.0, bestBlob = null, bestQ = 0;
+          for (let i = 0; i < 12; i++) {
+            const mid = (lo + hi) / 2;
+            const blob = await new Promise(res => canvas.toBlob(res, fmt, mid));
+            if (!blob) continue;
+            if (blob.size <= targetBytes) {
+              bestBlob = blob; bestQ = mid; lo = mid;
+            } else {
+              hi = mid;
+            }
+          }
+          return { blob: bestBlob, quality: bestQ };
+        }
+
         if (originalFileSize <= targetBytes) {
           const canvas = document.createElement('canvas');
           canvas.width = originalWidth; canvas.height = originalHeight;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(originalImage, 0, 0);
           const blob = await new Promise(res => canvas.toBlob(res, fmt, 0.92));
-          if (blob && blob.size <= targetBytes) {
-            resizedBlob = blob;
-            showResult(blob, originalWidth, originalHeight, 0.92);
-            compressBtn.disabled = false;
-            return;
-          }
-        }
-
-        // 2) Try to reach target using only quality adjustment (no dimension change)
-        const sizeAtLowQ = await blobSizeAt(originalWidth, originalHeight, 0.1);
-        if (sizeAtLowQ <= targetBytes) {
-          const best = await findBestQuality(originalWidth, originalHeight, targetBytes);
-          if (best.blob) {
-            resizedBlob = best.blob;
-            showResult(best.blob, originalWidth, originalHeight, best.quality);
-          } else {
-            actionStatus.textContent = 'Compression failed.';
-          }
-          compressBtn.disabled = false;
-          return;
-        }
-
-        // 3) Must shrink dimensions – intelligent one‑shot estimation
-        const ratio = targetBytes / originalFileSize;
-        let scale = Math.sqrt(ratio) * 0.85;
-        scale = Math.max(0.01, Math.min(1, scale));
-        let w = Math.max(1, Math.floor(originalWidth * scale));
-        let h = Math.round(w / aspectRatio);
-        if (h < 1) { h = 1; w = Math.round(h * aspectRatio); }
-
-        let curSize = await blobSizeAt(w, h, 0.5);
-        for (let i = 0; i < 2; i++) {
-          if (curSize <= targetBytes * 1.2 && curSize >= targetBytes * 0.8) break;
-          const scaleAdjust = Math.sqrt(targetBytes / curSize) * 0.9;
-          if (curSize > targetBytes) {
-            w = Math.max(1, Math.floor(w * scaleAdjust));
-          } else {
-            w = Math.min(originalWidth, Math.floor(w * scaleAdjust));
-          }
-          h = Math.round(w / aspectRatio);
-          if (h < 1) { h = 1; w = Math.round(h * aspectRatio); }
-          curSize = await blobSizeAt(w, h, 0.5);
-        }
-
-        const best = await findBestQuality(w, h, targetBytes);
-        if (best.blob) {
-          resizedBlob = best.blob;
-          showResult(best.blob, w, h, best.quality);
-        } else {
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(originalImage, 0, 0, w, h);
-          const blob = await new Promise(res => canvas.toBlob(res, fmt, 0.5));
-          if (blob) {
-            resizedBlob = blob;
-            showResult(blob, w, h, 0.5);
-          } else {
-            actionStatus.textContent = 'Compression failed.';
-          }
-        }
-        compressBtn.disabled = false;
-      });
-
-      // Helper: return blob size at given dimensions and quality
-      async function blobSizeAt(w, h, quality) {
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(originalImage, 0, 0, w, h);
-        return new Promise(resolve => {
-          canvas.toBlob(blob => resolve(blob ? blob.size : Infinity), formatSelect.value, quality);
-        });
-      }
-
-      // Helper: binary search for highest quality ≤ targetBytes at fixed dimensions
-      async function findBestQuality(w, h, targetBytes) {
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(originalImage, 0, 0, w, h);
-        const fmt = formatSelect.value;
-        let lo = 0.1, hi = 1.0, bestBlob = null, bestQ = 0;
-        for (let i = 0; i < 10; i++) {
-          const mid = (lo + hi) / 2;
-          const blob = await new Promise(res => canvas.toBlob(res, fmt, mid));
-          if (!blob) continue;
-          if (blob.size <= targetBytes) {
-            bestBlob = blob; bestQ = mid; lo = mid;
-          } else {
-            hi = mid;
-          }
-        }
-        return { blob: bestBlob, quality: bestQ };
-      }
-
-      function showResult(blob, w, h, quality) {
-        const url = URL.createObjectURL(blob);
-        resizedPreview.innerHTML = '';
-        const img = new Image();
-        img.src = url;
-        img.style.maxWidth = '100%'; img.style.maxHeight = '240px';
-        resizedPreview.appendChild(img);
-        downloadBtn.disabled = false;
-        actionStatus.textContent = `Compressed to ${(blob.size/1024).toFixed(1)} KB (q=${quality.toFixed(2)}, ${w}×${h}).`;
-      }
-
-      // ---- Download logic ----
-      downloadBtn.addEventListener('click', () => {
-        if (!resizedBlob) { actionStatus.textContent = 'Nothing to download.'; return; }
-        const reader = new FileReader();
-        reader.onload = function() {
-          const base64 = reader.result.split(',')[1];
-          const ext = formatSelect.value === 'image/jpeg' ? 'jpg' : (formatSelect.value === 'image/webp' ? 'webp' : 'png');
-          const fileName = 'resized_' + Date.now() + '.' + ext;
-          if (window.Android && window.Android.saveImage) {
-            window.Android.saveImage(base64, fileName);
-            actionStatus.textContent = 'Saving to Downloads…';
-          } else {
-            actionStatus.textContent = 'Save function not available.';
-          }
-        };
-        reader.readAsDataURL(resizedBlob);
-      });
-
-      // ---- RESET / CLEAR function (UI + app cache) ----
-      function resetApp() {
-        fileInput.value = "";
-        originalImage = null;
-        originalWidth = 0;
-        originalHeight = 0;
-        aspectRatio = 1;
-        currentPxW = 800;
-        currentPxH = 600;
-        resizedBlob = null;
-        originalFileSize = 0;
-        setDisplayedDimensions(800, 600);
-        originalPreview.innerHTML = '<span>Original</span>';
-        resizedPreview.innerHTML = '<span>Processed</span>';
-        originalInfo.textContent = 'No image loaded.';
-        actionStatus.textContent = 'Ready.';
-        downloadBtn.disabled = true;
-        pixelEquivalent.textContent = '';
-        if (window.Android && window.Android.clearAppData) {
-          window.Android.clearAppData();
-        }
-      }
-
-      const closeBtn = document.querySelector('.title-btn:nth-child(3)');
-      if (closeBtn) {
-        closeBtn.addEventListener('click', resetApp);
-      }
-
-      formatSelect.addEventListener('change', updateQualityUI);
-      updateQualityUI();
-      updateModeUI();
-    })();
-  </script>
-</body>
-</html><!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy"
-        content="
-          default-src 'self';
-          img-src 'self' data: blob:;
-          style-src 'self' 'unsafe-inline';
-          script-src 'self' 'unsafe-inline';
-          connect-src 'none';
-        ">
-  <title>IMG Resizer</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: #008080;
-      font-family: 'Segoe UI', 'MS Sans Serif', 'Microsoft Sans Serif', Arial, sans-serif;
-      font-size: 14px;
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-      min-height: 100vh;
-      padding: 20px 12px 40px;
-    }
-    .window {
-      background: #c0c0c0;
-      border: 2px solid;
-      border-color: #ffffff #808080 #808080 #ffffff;
-      box-shadow: 2px 2px 0 rgba(0,0,0,0.3);
-      width: 100%;
-      max-width: 780px;
-      margin-top: 10px;
-    }
-    .title-bar {
-      background: linear-gradient(90deg, #000080, #1084d0);
-      color: white;
-      padding: 4px 6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-weight: bold;
-      font-size: 13px;
-    }
-    .title-bar-text { letter-spacing: 0.3px; }
-    .title-bar-buttons { display: flex; gap: 2px; }
-    .title-btn {
-      background: #c0c0c0;
-      border: 2px solid;
-      border-color: #ffffff #808080 #808080 #ffffff;
-      width: 20px; height: 20px;
-      font-size: 11px; line-height: 16px; text-align: center;
-      cursor: pointer; color: black; font-weight: bold;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .title-btn:active { border-color: #808080 #ffffff #ffffff #808080; }
-    .window-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
-    .field-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-    .field-row label { min-width: 60px; font-size: 13px; font-weight: 600; }
-    input[type="file"], input[type="number"], select, input[type="text"] {
-      font-family: inherit; font-size: 13px;
-      border: 2px solid; border-color: #808080 #ffffff #ffffff #808080;
-      background: white; padding: 4px 8px; outline: none;
-    }
-    input[type="number"] { width: 80px; }
-    input[type="text"] { width: 60px; }
-    select { padding: 4px 6px; }
-    button {
-      font-family: inherit; font-size: 13px; background: #c0c0c0;
-      border: 2px solid; border-color: #ffffff #808080 #808080 #ffffff;
-      padding: 5px 18px; cursor: pointer; min-width: 80px; font-weight: 600;
-    }
-    button:active { border-color: #808080 #ffffff #ffffff #808080; }
-    button:focus-visible { outline: 1px dotted black; outline-offset: -4px; }
-    button:disabled { color: #808080; cursor: default; }
-    hr { border: 1px solid #808080; border-bottom-color: #ffffff; margin: 4px 0 10px; }
-    .radio-group { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-    .radio-group label { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
-    .preview-area { display: flex; gap: 12px; flex-wrap: wrap; }
-    .preview-box {
-      border: 2px inset; background: white; padding: 10px; text-align: center;
-      flex: 1 1 200px; min-height: 140px; display: flex; align-items: center;
-      justify-content: center; overflow: auto;
-    }
-    .preview-box img { max-width: 100%; max-height: 240px; display: block; }
-    .status-bar { border: 2px inset; padding: 4px 8px; font-size: 12px; background: white; margin-top: 4px; }
-    .note { font-size: 11px; color: #222; margin-top: 2px; }
-    .hidden { display: none !important; }
-    @media (max-width: 600px) {
-      body { padding: 12px 8px 32px; }
-      .window-body { padding: 10px; gap: 10px; }
-      .field-row { flex-direction: column; align-items: flex-start; }
-      .field-row label { min-width: auto; }
-      input[type="number"], input[type="text"], select { width: 100%; }
-      button { width: 100%; padding: 8px; }
-      .preview-area { flex-direction: column; }
-      .preview-box { min-height: 120px; }
-      .radio-group { flex-direction: column; gap: 8px; }
-    }
-  </style>
-</head>
-<body>
-  <div class="window">
-    <div class="title-bar">
-      <div class="title-bar-text">📷 IMG Resizer</div>
-      <div class="title-bar-buttons">
-        <div class="title-btn">—</div>
-        <div class="title-btn">□</div>
-        <div class="title-btn">✕</div>
-      </div>
-    </div>
-    <div class="window-body">
-      <div class="field-row">
-        <label>Open Image:</label>
-        <input type="file" id="fileInput" accept="image/*">
-        <span class="note">(stays on your device)</span>
-      </div>
-      <div class="status-bar" id="originalInfo">No image loaded.</div>
-      <div class="preview-area">
-        <div class="preview-box" id="originalPreview"><span>Original</span></div>
-        <div class="preview-box" id="resizedPreview"><span>Processed</span></div>
-      </div>
-      <div class="radio-group">
-        <label><input type="radio" name="resizeMode" value="dimensions" checked> Resize by Dimensions</label>
-        <label><input type="radio" name="resizeMode" value="filesize"> Resize by File Size (KB)</label>
-      </div>
-      <div id="dimensionControls">
-        <div class="radio-group" id="unitGroup">
-          <label><input type="radio" name="unit" value="px" checked> Pixels</label>
-          <label><input type="radio" name="unit" value="cm"> Centimeters</label>
-          <label class="hidden" id="dpiLabel">DPI: <input type="number" id="dpiInput" value="96" min="1" max="1200" step="1"></label>
-        </div>
-        <div class="field-row">
-          <label>Width:</label>
-          <input type="number" id="widthInput" min="1" value="800" step="any">
-          <label>Height:</label>
-          <input type="number" id="heightInput" min="1" value="600" step="any">
-          <label><input type="checkbox" id="aspectCheckbox" checked> Keep aspect ratio</label>
-          <button id="resizeBtn">Resize</button>
-        </div>
-        <div id="pixelEquivalent" class="note"></div>
-      </div>
-      <div id="filesizeControls" class="hidden">
-        <div class="field-row">
-          <label>Target KB:</label>
-          <input type="number" id="targetKB" min="1" value="100" step="1">
-          <button id="compressBtn">Compress</button>
-        </div>
-        <span class="note">(JPEG or WebP – PNG is lossless)</span>
-      </div>
-      <hr>
-      <div class="field-row">
-        <label>Format:</label>
-        <select id="formatSelect">
-          <option value="image/png">PNG</option>
-          <option value="image/jpeg">JPEG</option>
-          <option value="image/webp">WebP</option>
-        </select>
-        <label id="qualityLabel" class="hidden">Quality:</label>
-        <input type="range" id="qualitySlider" min="0.1" max="1.0" step="0.1" value="0.92" class="hidden">
-        <button id="downloadBtn" disabled>💾 Download</button>
-      </div>
-      <div class="status-bar" id="actionStatus">Ready.</div>
-    </div>
-  </div>
-
-  <script>
-    (() => {
-      // DOM refs
-      const fileInput = document.getElementById('fileInput');
-      const originalInfo = document.getElementById('originalInfo');
-      const originalPreview = document.getElementById('originalPreview');
-      const resizedPreview = document.getElementById('resizedPreview');
-      const widthInput = document.getElementById('widthInput');
-      const heightInput = document.getElementById('heightInput');
-      const aspectCheckbox = document.getElementById('aspectCheckbox');
-      const resizeBtn = document.getElementById('resizeBtn');
-      const formatSelect = document.getElementById('formatSelect');
-      const qualityLabel = document.getElementById('qualityLabel');
-      const qualitySlider = document.getElementById('qualitySlider');
-      const downloadBtn = document.getElementById('downloadBtn');
-      const actionStatus = document.getElementById('actionStatus');
-      const pixelEquivalent = document.getElementById('pixelEquivalent');
-      const dpiLabel = document.getElementById('dpiLabel');
-      const dpiInput = document.getElementById('dpiInput');
-      const unitRadios = document.getElementsByName('unit');
-      const modeRadios = document.getElementsByName('resizeMode');
-      const dimensionControls = document.getElementById('dimensionControls');
-      const filesizeControls = document.getElementById('filesizeControls');
-      const targetKBInput = document.getElementById('targetKB');
-      const compressBtn = document.getElementById('compressBtn');
-
-      let originalImage = null;
-      let originalWidth = 0, originalHeight = 0;
-      let aspectRatio = 1;
-      let currentPxW = 800, currentPxH = 600;
-      let resizedBlob = null;
-      let originalFileSize = 0;
-
-      // ---- helpers ----
-      function updateQualityUI() {
-        const fmt = formatSelect.value;
-        const show = (fmt === 'image/jpeg' || fmt === 'image/webp');
-        qualityLabel.classList.toggle('hidden', !show);
-        qualitySlider.classList.toggle('hidden', !show);
-      }
-
-      function getDPI() { return parseInt(dpiInput.value) || 96; }
-      function cmToPx(cm) { return cm * getDPI() / 2.54; }
-      function pxToCm(px) { return px * 2.54 / getDPI(); }
-
-      function getCurrentUnit() {
-        return [...unitRadios].find(r => r.checked)?.value || 'px';
-      }
-
-      function setDisplayedDimensions(pxW, pxH) {
-        const unit = getCurrentUnit();
-        if (unit === 'px') {
-          widthInput.value = Math.round(pxW);
-          heightInput.value = Math.round(pxH);
-        } else {
-          widthInput.value = pxToCm(pxW).toFixed(2);
-          heightInput.value = pxToCm(pxH).toFixed(2);
-        }
-        updatePixelEquivalent();
-      }
-
-      function getEnteredDimensions() {
-        const unit = getCurrentUnit();
-        const rawW = parseFloat(widthInput.value);
-        const rawH = parseFloat(heightInput.value);
-        if (isNaN(rawW) || isNaN(rawH)) return null;
-        if (unit === 'px') return { w: Math.round(rawW), h: Math.round(rawH) };
-        return { w: Math.round(cmToPx(rawW)), h: Math.round(cmToPx(rawH)) };
-      }
-
-      function syncFromWidth() {
-        if (!aspectCheckbox.checked || !originalImage) return;
-        const dim = getEnteredDimensions();
-        if (!dim) return;
-        const newW = dim.w;
-        const newH = Math.round(newW / aspectRatio);
-        currentPxW = newW;
-        currentPxH = newH;
-        setDisplayedDimensions(currentPxW, currentPxH);
-      }
-
-      function syncFromHeight() {
-        if (!aspectCheckbox.checked || !originalImage) return;
-        const dim = getEnteredDimensions();
-        if (!dim) return;
-        const newH = dim.h;
-        const newW = Math.round(newH * aspectRatio);
-        currentPxW = newW;
-        currentPxH = newH;
-        setDisplayedDimensions(currentPxW, currentPxH);
-      }
-
-      function updatePixelEquivalent() {
-        if (!originalImage || getCurrentUnit() !== 'cm') {
-          pixelEquivalent.textContent = '';
-          return;
-        }
-        pixelEquivalent.textContent = `≈ ${currentPxW} × ${currentPxH} pixels at ${getDPI()} DPI`;
-      }
-
-      function updateModeUI() {
-        const mode = [...modeRadios].find(r => r.checked)?.value;
-        dimensionControls.classList.toggle('hidden', mode !== 'dimensions');
-        filesizeControls.classList.toggle('hidden', mode !== 'filesize');
-      }
-
-      // ---- Load image ----
-      fileInput.addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        originalFileSize = file.size;
-        const reader = new FileReader();
-        reader.onload = function(ev) {
-          const img = new Image();
-          img.onload = function() {
-            originalImage = img;
-            originalWidth = img.naturalWidth;
-            originalHeight = img.naturalHeight;
-            aspectRatio = originalWidth / originalHeight;
-            currentPxW = originalWidth;
-            currentPxH = originalHeight;
-            setDisplayedDimensions(currentPxW, currentPxH);
-            originalInfo.textContent = `Original: ${originalWidth} × ${originalHeight} | ${(file.size/1024).toFixed(1)} KB`;
-            originalPreview.innerHTML = '';
-            const clone = img.cloneNode();
-            clone.style.maxWidth = '100%'; clone.style.maxHeight = '240px';
-            originalPreview.appendChild(clone);
-            resizedPreview.innerHTML = '<span>Processed</span>';
-            resizedBlob = null;
-            downloadBtn.disabled = true;
-            actionStatus.textContent = 'Image loaded. Choose mode and options.';
-          };
-          img.src = ev.target.result;
-        };
-        reader.readAsDataURL(file);
-      });
-
-      // ---- Aspect ratio sync ----
-      widthInput.addEventListener('input', syncFromWidth);
-      heightInput.addEventListener('input', syncFromHeight);
-      aspectCheckbox.addEventListener('change', () => {
-        if (aspectCheckbox.checked && originalImage) syncFromWidth();
-      });
-
-      // ---- Unit / DPI changes ----
-      unitRadios.forEach(r => r.addEventListener('change', () => setDisplayedDimensions(currentPxW, currentPxH)));
-      dpiInput.addEventListener('input', () => {
-        if (getCurrentUnit() === 'cm') setDisplayedDimensions(currentPxW, currentPxH);
-      });
-
-      // ---- Mode switch ----
-      modeRadios.forEach(r => r.addEventListener('change', updateModeUI));
-
-      // ---- Resize by dimensions (unchanged) ----
-      resizeBtn.addEventListener('click', () => {
-        if (!originalImage) { actionStatus.textContent = 'Please open an image first.'; return; }
-        const dim = getEnteredDimensions();
-        if (!dim || dim.w < 1 || dim.h < 1) { actionStatus.textContent = 'Invalid dimensions.'; return; }
-        const targetW = dim.w, targetH = dim.h;
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW; canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(originalImage, 0, 0, targetW, targetH);
-        const previewUrl = canvas.toDataURL('image/png');
-        resizedPreview.innerHTML = '';
-        const img = new Image();
-        img.src = previewUrl;
-        img.style.maxWidth = '100%'; img.style.maxHeight = '240px';
-        resizedPreview.appendChild(img);
-        const fmt = formatSelect.value;
-        const q = (fmt === 'image/jpeg' || fmt === 'image/webp') ? parseFloat(qualitySlider.value) : undefined;
-        canvas.toBlob(blob => {
           resizedBlob = blob;
-          downloadBtn.disabled = false;
-          actionStatus.textContent = `Resized to ${targetW}×${targetH} px (${(blob.size/1024).toFixed(1)} KB).`;
-        }, fmt, q);
-      });
-
-      // ---- ⚡ ULTRAFAST TARGET‑SIZE COMPRESSION (1‑2 canvas draws) ----
-      compressBtn.addEventListener('click', async () => {
-        if (!originalImage) { actionStatus.textContent = 'No image.'; return; }
-        const targetBytes = parseFloat(targetKBInput.value) * 1024;
-        if (isNaN(targetBytes) || targetBytes <= 0) { actionStatus.textContent = 'Invalid target size.'; return; }
-        const fmt = formatSelect.value;
-        if (fmt === 'image/png') {
-          actionStatus.textContent = 'PNG is lossless – cannot target file size. Use JPEG or WebP.';
-          return;
-        }
-        compressBtn.disabled = true;
-        actionStatus.textContent = 'Compressing…';
-
-        // 1) Quick check: if original already fits, just re‑encode at quality 0.92
-        if (originalFileSize <= targetBytes) {
-          const canvas = document.createElement('canvas');
-          canvas.width = originalWidth; canvas.height = originalHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(originalImage, 0, 0);
-          const blob = await new Promise(res => canvas.toBlob(res, fmt, 0.92));
-          if (blob && blob.size <= targetBytes) {
-            resizedBlob = blob;
-            showResult(blob, originalWidth, originalHeight, 0.92);
-            compressBtn.disabled = false;
-            return;
-          }
-        }
-
-        // 2) Try to reach target using only quality adjustment (no dimension change)
-        const sizeAtLowQ = await blobSizeAt(originalWidth, originalHeight, 0.1);
-        if (sizeAtLowQ <= targetBytes) {
-          const best = await findBestQuality(originalWidth, originalHeight, targetBytes);
-          if (best.blob) {
-            resizedBlob = best.blob;
-            showResult(best.blob, originalWidth, originalHeight, best.quality);
-          } else {
-            actionStatus.textContent = 'Compression failed.';
-          }
+          showResult(blob, originalWidth, originalHeight, 0.92);
           compressBtn.disabled = false;
           return;
         }
 
-        // 3) Must shrink dimensions – intelligent one‑shot estimation
+        const sizeAtLowQ = await blobSizeAt(originalWidth, originalHeight, 0.1);
+        if (sizeAtLowQ <= targetBytes) {
+          const { blob, quality } = await findBestQuality(originalWidth, originalHeight);
+          resizedBlob = blob;
+          showResult(blob, originalWidth, originalHeight, quality);
+          compressBtn.disabled = false;
+          return;
+        }
+
         const ratio = targetBytes / originalFileSize;
         let scale = Math.sqrt(ratio) * 0.85;
         scale = Math.max(0.01, Math.min(1, scale));
@@ -922,8 +416,7 @@
         if (h < 1) { h = 1; w = Math.round(h * aspectRatio); }
 
         let curSize = await blobSizeAt(w, h, 0.5);
-        for (let i = 0; i < 2; i++) {
-          if (curSize <= targetBytes * 1.2 && curSize >= targetBytes * 0.8) break;
+        for (let attempt = 0; attempt < 2; attempt++) {
           const scaleAdjust = Math.sqrt(targetBytes / curSize) * 0.9;
           if (curSize > targetBytes) {
             w = Math.max(1, Math.floor(w * scaleAdjust));
@@ -935,57 +428,15 @@
           curSize = await blobSizeAt(w, h, 0.5);
         }
 
-        const best = await findBestQuality(w, h, targetBytes);
-        if (best.blob) {
-          resizedBlob = best.blob;
-          showResult(best.blob, w, h, best.quality);
+        const { blob, quality } = await findBestQuality(w, h);
+        if (blob) {
+          resizedBlob = blob;
+          showResult(blob, w, h, quality);
         } else {
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(originalImage, 0, 0, w, h);
-          const blob = await new Promise(res => canvas.toBlob(res, fmt, 0.5));
-          if (blob) {
-            resizedBlob = blob;
-            showResult(blob, w, h, 0.5);
-          } else {
-            actionStatus.textContent = 'Compression failed.';
-          }
+          actionStatus.textContent = 'Compression failed.';
         }
         compressBtn.disabled = false;
       });
-
-      // Helper: return blob size at given dimensions and quality
-      async function blobSizeAt(w, h, quality) {
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(originalImage, 0, 0, w, h);
-        return new Promise(resolve => {
-          canvas.toBlob(blob => resolve(blob ? blob.size : Infinity), formatSelect.value, quality);
-        });
-      }
-
-      // Helper: binary search for highest quality ≤ targetBytes at fixed dimensions
-      async function findBestQuality(w, h, targetBytes) {
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(originalImage, 0, 0, w, h);
-        const fmt = formatSelect.value;
-        let lo = 0.1, hi = 1.0, bestBlob = null, bestQ = 0;
-        for (let i = 0; i < 10; i++) {
-          const mid = (lo + hi) / 2;
-          const blob = await new Promise(res => canvas.toBlob(res, fmt, mid));
-          if (!blob) continue;
-          if (blob.size <= targetBytes) {
-            bestBlob = blob; bestQ = mid; lo = mid;
-          } else {
-            hi = mid;
-          }
-        }
-        return { blob: bestBlob, quality: bestQ };
-      }
 
       function showResult(blob, w, h, quality) {
         const url = URL.createObjectURL(blob);
@@ -998,7 +449,7 @@
         actionStatus.textContent = `Compressed to ${(blob.size/1024).toFixed(1)} KB (q=${quality.toFixed(2)}, ${w}×${h}).`;
       }
 
-      // ---- Download logic ----
+      // ---- Download logic (unchanged, uses native save) ----
       downloadBtn.addEventListener('click', () => {
         if (!resizedBlob) { actionStatus.textContent = 'Nothing to download.'; return; }
         const reader = new FileReader();
@@ -1016,7 +467,7 @@
         reader.readAsDataURL(resizedBlob);
       });
 
-      // ---- RESET / CLEAR function (UI + app cache) ----
+      // ---- RESET / CLEAR function (✕ button) ----
       function resetApp() {
         fileInput.value = "";
         originalImage = null;
